@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
 const secretKey = 'superdupersecret123'; // Enkel hemlig nyckel för JWT
 
 // Middleware (hjälpmedel för servern)
@@ -118,19 +118,4 @@ function verifyToken(req, res, next) {
 // 3. Skyddad route (kräver inloggning)
 app.get('/api/protected', verifyToken, (req, res) => {
     // Hämta data från databasen att visa
-    db.all(`SELECT id, username FROM users`, [], (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: 'Kunde inte hämta data.' });
-        }
-
-        res.json({
-            message: 'Du har hittat den hemliga sidan!',
-            loggedInAs: req.user.username,
-            allRegisteredUsers: rows
-        });
-    });
-});
-
-app.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
-});
+    db.all(`SELECT id
