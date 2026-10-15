@@ -4,6 +4,9 @@ En REST API-webbtjänst byggd med Node.js och Express som hanterar användarregi
 ## GitHub-repo
 https://github.com/ardalansale/dt207g-lab-backend
 
+## Publicerad webbplats
+https://dt207g-lab4-api.onrender.com/
+
 ## Funktionalitet
 - **`POST /api/register`** – Registrerar en ny användare med säkert krypterat lösenord (`bcrypt`).
 - **`POST /api/login`** – Loggar in användaren och returnerar en genererad JWT-token.
