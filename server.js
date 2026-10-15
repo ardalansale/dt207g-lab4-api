@@ -118,4 +118,19 @@ function verifyToken(req, res, next) {
 // 3. Skyddad route (kräver inloggning)
 app.get('/api/protected', verifyToken, (req, res) => {
     // Hämta data från databasen att visa
-    db.all(`SELECT id
+    db.all(`SELECT id, username FROM users`, [], (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: 'Kunde inte hämta data.' });
+        }
+
+        res.json({
+            message: 'Du har hittat den hemliga sidan!',
+            loggedInAs: req.user.username,
+            allRegisteredUsers: rows
+        });
+    });
+});
+
+app.listen(port, () => {
+    console.log(`Server is running on port ${port}`);
+});
