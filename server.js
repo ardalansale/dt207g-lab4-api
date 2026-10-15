@@ -1,5 +1,5 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
@@ -8,70 +8,73 @@ const app = express();
 const port = process.env.PORT || 3000;
 const secretKey = 'superdupersecret123'; // Enkel hemlig nyckel för JWT
 
-// Middleware (hjälpmedel för servern)
-app.use(express.json()); // Gör så servern kan läsa JSON-data från formulär
-app.use(cors());         // Gör så din webbplats kan prata med servern
+// Middleware
+app.use(express.json());
+app.use(cors());
 
-// Skapar filen "database.db" automatiskt
-const db = new sqlite3.Database('./database.db', (err) => {
-    if (err) {
-        console.log('Kunde inte ansluta till databasen:', err.message);
-    } else {
-        console.log('Ansluten till databasen!');
+// Anslutning till Neon (PostgreSQL) via DATABASE_URL miljövariabel
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false // Krävs för att ansluta säkert till molnet
     }
 });
 
 // Skapa tabell för användare om den inte finns
-db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT,
-    password TEXT
-)`);
-
+async function initDb() {
+    try {
+        await pool.query(`CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE,
+            password TEXT
+        )`);
+        console.log('Ansluten till Neon-databasen och tabell kontrollerad!');
+    } catch (err) {
+        console.log('Kunde inte ansluta till databasen:', err.message);
+    }
+}
+initDb();
 
 // 1. Registrera ny användare
 app.post('/api/register', async (req, res) => {
-    const username = req.body.username;
-    const password = req.body.password;
+    const { username, password } = req.body;
 
-    // Enkel kontroll att fälten inte är tomma
     if (!username || !password) {
         return res.status(400).json({ error: 'Du måste fylla i både användarnamn och lösenord!' });
     }
 
     try {
-        // Kryptera lösenordet (så det inte sparas i klartext)
         const saltRounds = 10;
         const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-        // Spara till databasen
-        const sql = `INSERT INTO users (username, password) VALUES (?, ?)`;
-        db.run(sql, [username, hashedPassword], (err) => {
-            if (err) {
-                return res.status(400).json({ error: 'Användarnamnet är redan upptaget.' });
-            }
-            res.status(201).json({ message: 'Kontot är skapat!' });
-        });
+        await pool.query(
+            `INSERT INTO users (username, password) VALUES ($1, $2)`,
+            [username, hashedPassword]
+        );
 
-    } catch (error) {
+        res.status(201).json({ message: 'Kontot är skapat!' });
+    } catch (err) {
+        // PostgreSQL felkod 23505 betyder att unikt värde (username) redan finns
+        if (err.code === '23505') {
+            return res.status(400).json({ error: 'Användarnamnet är redan upptaget.' });
+        }
         res.status(500).json({ error: 'Ett serverfel uppstod.' });
     }
 });
 
-
 // 2. Logga in
-app.post('/api/login', (req, res) => {
-    const username = req.body.username;
-    const password = req.body.password;
+app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
 
     if (!username || !password) {
         return res.status(400).json({ error: 'Fyll i användarnamn och lösenord.' });
     }
 
-    // Leta efter användaren i databasen
-    const sql = `SELECT * FROM users WHERE username = ?`;
-    db.get(sql, [username], async (err, user) => {
-        if (err || !user) {
+    try {
+        const result = await pool.query(`SELECT * FROM users WHERE username = $1`, [username]);
+        const user = result.rows[0];
+
+        if (!user) {
             return res.status(401).json({ error: 'Felaktigt användarnamn eller lösenord.' });
         }
 
@@ -80,7 +83,6 @@ app.post('/api/login', (req, res) => {
             return res.status(401).json({ error: 'Felaktigt användarnamn eller lösenord.' });
         }
 
-        // Skapa en JWT-token
         const token = jwt.sign(
             { id: user.id, username: user.username }, 
             secretKey, 
@@ -91,15 +93,14 @@ app.post('/api/login', (req, res) => {
             message: 'Inloggning lyckades!',
             token: token
         });
-    });
+    } catch (err) {
+        res.status(500).json({ error: 'Ett serverfel uppstod vid inloggning.' });
+    }
 });
-
 
 // Hjälpfunktion för att kolla om JWT-token är giltig
 function verifyToken(req, res, next) {
     const authHeader = req.headers['authorization'];
-    
-    // Token skickas med som "Bearer <token>"
     const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
@@ -116,19 +117,18 @@ function verifyToken(req, res, next) {
 }
 
 // 3. Skyddad route (kräver inloggning)
-app.get('/api/protected', verifyToken, (req, res) => {
-    // Hämta data från databasen att visa
-    db.all(`SELECT id, username FROM users`, [], (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: 'Kunde inte hämta data.' });
-        }
+app.get('/api/protected', verifyToken, async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT id, username FROM users`);
 
         res.json({
             message: 'Du har hittat den hemliga sidan!',
             loggedInAs: req.user.username,
-            allRegisteredUsers: rows
+            allRegisteredUsers: result.rows
         });
-    });
+    } catch (err) {
+        res.status(500).json({ error: 'Kunde inte hämta data.' });
+    }
 });
 
 app.listen(port, () => {
